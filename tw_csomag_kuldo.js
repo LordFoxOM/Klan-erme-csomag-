@@ -1,18 +1,9 @@
 (function () {
   'use strict';
-
-  /* =============================================================
-     TW Csomag Küldő – Eredeti (szerveres GET) – SZIGORÚ átirányítás
-     - Ha NEM az áttekintés (termelés) oldalon vagy: azonnal ÁTIRÁNYÍT és LEÁLL.
-       (Sem panel, sem hálózati hívás NEM fut a rossz oldalon.)
-     - Csak akkor injektál panelt és fut, ha már a megfelelő oldalon vagy.
-     ============================================================= */
-
   function isOverview() {
     return location.href.includes('screen=overview_villages') && location.href.includes('mode=prod');
   }
 
-  // --- Early guard: force redirect then abort ---
   if (!isOverview()) {
     var cur = new URLSearchParams(location.search);
     var params = new URLSearchParams();
@@ -30,8 +21,6 @@
     location.href = '/game.php?' + params.toString();
     return; // VERY IMPORTANT: stop the script here
   }
-
-  // ===== From here on, we are on the correct page =====
 
   function qs(sel, root) { return (root || document).querySelector(sel); }
   function qsa(sel, root) { return Array.from((root || document).querySelectorAll(sel)); }
@@ -73,7 +62,6 @@
     if (el) el.textContent = msg;
   }
 
-  /* ----------------- UI Panel ----------------- */
   const panel = document.createElement('div');
   panel.id = 'lf-package-panel';
   panel.style.cssText = [
@@ -102,7 +90,7 @@
     '  <div id="lf-status" style="color:#444;font-size:12px"></div>',
     '</div>',
     '<div id="villList" style="max-height:420px;overflow-y:auto;margin-top:10px;border-top:1px solid #ccc;padding-top:5px">Csoport kiválasztva. Kattints az Indításra!</div>',
-    '<div style="text-align:center;font-size:11px;color:#555;margin-top:8px">By <b>LordFox</b> · eredeti-flow</div>'
+    '<div style="text-align:center;font-size:11px;color:#555;margin-top:8px">By <b>LordFox</b> · Eredeti Script/div>'
   ].join('');
 
   document.body.appendChild(panel);
@@ -118,7 +106,6 @@
   };
   panel.ondragstart = function () { return false; };
 
-  /* ----------------- State ----------------- */
   let sentPackages = 0;
   let coordinate = '';
   let pkgWood = 0, pkgClay = 0, pkgIron = 0, maxPackages = 0;
@@ -126,7 +113,6 @@
   let scriptStarted = false;
   const usedVillageIds = new Set();
 
-  /* ----------------- Groups ----------------- */
   function loadGroups() {
     const links = qsa('.group-menu-item');
     const arr = links.map(function (link) {
@@ -153,7 +139,6 @@
   }
   loadGroups();
 
-  /* ----------------- Start ----------------- */
   qs('#startScript').onclick = function () {
     const parsed = parseCoordinate(qs('#coordInput').value);
     if (!parsed) { alert('Érvénytelen koordináta! Így add meg: 500|500'); return; }
@@ -172,7 +157,6 @@
     loadVillages();
   };
 
-  /* ----------------- Overview fetch (original flow) ----------------- */
   function parseOverviewDoc(doc, targetX, targetY) {
     let rows = qsa('#production_table tr.nowrap', doc);
     if (!rows.length) rows = qsa('#production_table tr', doc);
@@ -276,7 +260,6 @@
     });
   }
 
-  /* ----------------- Market fetch ----------------- */
   function fetchMarketData(villages) {
     status('Piac adatok lekérése...');
     const pkgVol = pkgWood + pkgClay + pkgIron;
@@ -307,7 +290,6 @@
     step();
   }
 
-  /* ----------------- Render + Send ----------------- */
   function render(villages) {
     villages.sort(function(a,b){ return a.distance - b.distance; });
     const cont = qs('#villList');
