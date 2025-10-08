@@ -2,12 +2,11 @@
   'use strict';
 
   /* =============================================================
-     TW Csomag Küldő – Eredeti megoldás (szerveres GET) – redirect + autostart
-     - Start gomb: ha nem az áttekintésen vagy, ÁTIRÁNYÍT az overview (prod) oldalra
-       és elmenti a beállításokat, majd automatikusan folytatja.
-     - Token (t) és village param megőrzése minden kérésnél
-     - Overview letöltés több stratégiával (page=-1, lapozás, ajax variánsok)
-     - Piac adatok lehívása falunként
+     TW Csomag Küldő – Eredeti (szerveres GET) + "előbb kérdez" átirányítás
+     - Ha NEM az áttekintésen vagy: előbb felajánlja:
+         [Megnyitom kézzel] vagy [Átirányítás + újraindítás]
+     - Ha Átirányítás: elmenti a beállításokat és overview-ra dob, ott autostart.
+     - Ha már áttekintésen vagy: azonnal indul.
      ============================================================= */
 
   /* ----------------- Small utils ----------------- */
@@ -64,7 +63,7 @@
   panel.style.cssText = [
     'position:fixed','top:90px','left:90px','z-index:9999',
     'background:#f4e4bc','color:#000','padding:10px','border:2px solid #804000',
-    'width:520px','resize:both','overflow:auto','font-family:Verdana,sans-serif',
+    'width:540px','resize:both','overflow:auto','font-family:Verdana,sans-serif',
     'font-size:13px','border-radius:8px','box-shadow:0 0 10px #000'
   ].join(';');
 
@@ -81,13 +80,20 @@
     '  <label><span><img src="https://dshu.innogamescdn.com/asset/7d3266bc/graphic/eisen.webp" height="15"> <b>1 csomag vas</b></span><input id="ironInput" type="number" value="2500" style="width:100%"></label>',
     '  <label><span><b>Falu csoport</b></span><select id="groupSelector" style="width:100%"></select></label>',
     '</div>',
-    '<div style="margin-top:8px;display:flex;gap:8px;align-items:center">',
+    '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">',
     '  <button id="startScript" class="btn">Indítás</button>',
     '  <div><b>Elküldve:</b> <span id="sentCounter">0</span></div>',
     '  <div id="lf-status" style="color:#444;font-size:12px"></div>',
     '</div>',
+    '<div id="lf-not-overview" style="display:none;margin-top:8px;padding:8px;border:1px dashed #a87432;background:#fff7e0;border-radius:6px">',
+    '  <div style="margin-bottom:6px"><b>Nem az áttekintés (termelés) oldalon vagy.</b></div>',
+    '  <div style="display:flex;gap:8px;flex-wrap:wrap">',
+    '    <button id="lf-open-manual" class="btn">Megnyitom kézzel</button>',
+    '    <button id="lf-redirect-auto" class="btn">Átirányítás + újraindítás</button>',
+    '  </div>',
+    '</div>',
     '<div id="villList" style="max-height:420px;overflow-y:auto;margin-top:10px;border-top:1px solid #ccc;padding-top:5px">Csoport kiválasztva. Kattints az Indításra!</div>',
-    '<div style="text-align:center;font-size:11px;color:#555;margin-top:8px">By <b>LordFox</b></div>'
+    '<div style="text-align:center;font-size:11px;color:#555;margin-top:8px">By <b>LordFox</b> · eredeti-flow</div>'
   ].join('');
 
   document.body.appendChild(panel);
@@ -152,20 +158,30 @@
       alert('Hibás érték valamelyik mezőben!'); return;
     }
 
-    // Ha nem az áttekintésen vagyunk, irány oda + autostart
     if (!isOverview()) {
-      const cfg = {
-        coordinate: coordinate,
-        pkgWood: pkgWood, pkgClay: pkgClay, pkgIron: pkgIron, maxPackages: maxPackages,
-        selectedGroupId: selectedGroupId
-      };
-      try { localStorage.setItem(AUTOSTART_KEY, JSON.stringify(cfg)); } catch (e) {}
+      // Mutassunk választási lehetőséget, NE irányítsunk azonnal
+      const box = qs('#lf-not-overview');
+      box.style.display = 'block';
       const overviewUrl = buildUrl({screen:'overview_villages', mode:'prod', group:selectedGroupId||0, page:-1}, true);
-      location.href = overviewUrl;
+      qs('#lf-open-manual').onclick = function () {
+        // Nyissuk meg ugyanebben a tabban, de nincs autostart – futtasd újra a scriptet
+        location.href = overviewUrl;
+      };
+      qs('#lf-redirect-auto').onclick = function () {
+        // Mentsük el és irányítsunk, majd autostart
+        const cfg = {
+          coordinate: coordinate,
+          pkgWood: pkgWood, pkgClay: pkgClay, pkgIron: pkgIron, maxPackages: maxPackages,
+          selectedGroupId: selectedGroupId
+        };
+        try { localStorage.setItem(AUTOSTART_KEY, JSON.stringify(cfg)); } catch (e) {}
+        location.href = overviewUrl;
+      };
+      status('Nem az áttekintésen vagy. Válassz: kézi megnyitás vagy átirányítás + autostart.');
       return;
     }
 
-    // Már áttekintésen vagyunk → indul azonnal
+    // Már áttekintésen vagyunk → indul
     sentPackages = 0; usedVillageIds.clear(); scriptStarted = true;
     qs('#sentCounter').textContent = String(sentPackages);
     loadVillages();
