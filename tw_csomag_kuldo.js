@@ -3,7 +3,7 @@
 
   function envOk() {
     if (!window.$ || !window.TribalWars || !window.UI) {
-      console.warn('[CsomagKüldő] Várható globálok nem érhetők el (jQuery/TribalWars/UI).');
+      console.warn('[CsomagKüldő] jQuery/TribalWars/UI nem észlelhető. A játék oldalán futtasd.');
     }
     return true;
   }
@@ -30,6 +30,31 @@
   let scriptStarted = false;
   const usedVillageIds = new Set();
 
+  function parseCoordinate(raw) {
+    if (raw == null) return null;
+    let s = String(raw).trim();
+    // távolítsuk el gyakori láthatatlan karaktereket
+    s = s.replace(/[\u200B-\u200D\uFEFF]/g, '');
+    // engedjük a broken bar-t is (¦ U+00A6)
+    // fogadjuk el, ha extra szöveg is van körülötte (pl. "487|560 K55")
+    const m = s.match(/(\d{1,3})\s*[\|\u00A6]\s*(\d{1,3})/);
+    if (m) {
+      const x = parseInt(m[1], 10);
+      const y = parseInt(m[2], 10);
+      if (Number.isFinite(x) && Number.isFinite(y)) return x + '|' + y;
+    }
+    // fallback: szűrjük ki a felesleges karaktereket és próbáljuk újra
+    const stripped = s.replace(/[^\d\|\u00A6]/g, '');
+    const n = stripped.match(/(\d{1,3})[\|\u00A6](\d{1,3})/);
+    if (n) {
+      const x = parseInt(n[1], 10);
+      const y = parseInt(n[2], 10);
+      if (Number.isFinite(x) && Number.isFinite(y)) return x + '|' + y;
+    }
+    return null;
+  }
+
+  // Panel
   const panel = document.createElement('div');
   panel.id = 'lf-package-panel';
   panel.style.cssText = [
@@ -56,7 +81,7 @@
     '</div>',
     '<b style="font-size:15px">📦 Csomag Küldő</b>',
     '<table style="width:100%;margin-top:5px">',
-    '  <tr><td><b>Cél koordináta:</b></td><td><input id="coordInput" type="text" value=""></td></tr>',
+    '  <tr><td><b>Cél koordináta:</b></td><td><input id="coordInput" type="text" placeholder="pl. 500|500" value=""></td></tr>',
     '  <tr><td><b><img src="https://dshu.innogamescdn.com/asset/7d3266bc/graphic/holz.webp" height="15"> 1 csomag fa:</b></td><td><input id="woodInput" type="number" value="2800"></td></tr>',
     '  <tr><td><b><img src="https://dshu.innogamescdn.com/asset/7d3266bc/graphic/lehm.webp" height="15"> 1 csomag agyag:</b></td><td><input id="clayInput" type="number" value="3000"></td></tr>',
     '  <tr><td><b><img src="https://dshu.innogamescdn.com/asset/7d3266bc/graphic/eisen.webp" height="15"> 1 csomag vas:</b></td><td><input id="ironInput" type="number" value="2500"></td></tr>',
@@ -123,11 +148,14 @@
   }
 
   document.getElementById('startScript').onclick = function () {
-    coordinate = document.getElementById('coordInput').value.trim();
-    if (!coordinate || !/\\d+\\|\\d+/.test(coordinate)) {
-      alert('Érvénytelen koordináta!');
+    const raw = document.getElementById('coordInput').value;
+    const parsed = parseCoordinate(raw);
+    if (!parsed) {
+      alert('Érvénytelen koordináta! Így add meg: 500|500 (pipe jellel).');
       return;
     }
+    coordinate = parsed;
+
     pkgWood = parseInt(document.getElementById('woodInput').value, 10);
     pkgClay = parseInt(document.getElementById('clayInput').value, 10);
     pkgIron = parseInt(document.getElementById('ironInput').value, 10);
