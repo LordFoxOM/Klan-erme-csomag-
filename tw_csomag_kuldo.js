@@ -2,20 +2,18 @@
   'use strict';
 
   /* =============================================================
-     TW Csomag Küldő – Eredeti (szerveres GET) – azonnali átirányítással
-     - A script betöltésekor: ha NEM az áttekintés (termelés) oldalon vagy,
-       AZONNAL átirányít az overview_villages&mode=prod oldalra.
-     - Nincs kérdés/nincs választási lehetőség.
-     - Az áttekintésen a panel megjelenik, ott tudsz indulni.
+     TW Csomag Küldő – Eredeti (szerveres GET) – SZIGORÚ átirányítás
+     - Ha NEM az áttekintés (termelés) oldalon vagy: azonnal ÁTIRÁNYÍT és LEÁLL.
+       (Sem panel, sem hálózati hívás NEM fut a rossz oldalon.)
+     - Csak akkor injektál panelt és fut, ha már a megfelelő oldalon vagy.
      ============================================================= */
 
   function isOverview() {
     return location.href.includes('screen=overview_villages') && location.href.includes('mode=prod');
   }
 
-  // Mindig őrizzük meg a sitter token-t és az aktuális village paramétert
-  (function forceOverview() {
-    if (isOverview()) return;
+  // --- Early guard: force redirect then abort ---
+  if (!isOverview()) {
     var cur = new URLSearchParams(location.search);
     var params = new URLSearchParams();
     if (cur.has('t')) params.set('t', cur.get('t'));
@@ -28,13 +26,13 @@
     if (vid) params.set('village', vid);
     params.set('screen', 'overview_villages');
     params.set('mode', 'prod');
-    // page=-1 sok világon az összes falut hozza; ha nem támogatott, a script később lapozni fog
     params.set('page', '-1');
     location.href = '/game.php?' + params.toString();
-    return;
-  })();
+    return; // VERY IMPORTANT: stop the script here
+  }
 
-  // Ha idáig eljutunk, már az áttekintésen vagyunk
+  // ===== From here on, we are on the correct page =====
+
   function qs(sel, root) { return (root || document).querySelector(sel); }
   function qsa(sel, root) { return Array.from((root || document).querySelectorAll(sel)); }
   function safeInt(x) { var n = parseInt(x, 10); return Number.isFinite(n) ? n : 0; }
