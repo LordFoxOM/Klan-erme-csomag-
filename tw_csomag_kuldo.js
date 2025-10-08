@@ -2,20 +2,21 @@
   'use strict';
 
   /* =============================================================
-     TW Csomag Küldő – Eredeti megoldás (szerveres GET) – robusztus
+     TW Csomag Küldő – Eredeti megoldás (szerveres GET) – redirect + autostart
+     - Start gomb: ha nem az áttekintésen vagy, ÁTIRÁNYÍT az overview (prod) oldalra
+       és elmenti a beállításokat, majd automatikusan folytatja.
      - Token (t) és village param megőrzése minden kérésnél
-     - Overview letöltés több stratégiával:
-       1) page=-1 (összes falu)
-       2) paginált loop page=0..N (heurisztikusan)
-       3) ajax variánsok (ajax=1, ajax=fetch) – ha elérhető
-     - Szelektor-tolerancia (különböző témák/szerverek)
+     - Overview letöltés több stratégiával (page=-1, lapozás, ajax variánsok)
      - Piac adatok lehívása falunként
      ============================================================= */
 
-  /* ----------------- Helpers ----------------- */
+  /* ----------------- Small utils ----------------- */
   function qs(sel, root) { return (root || document).querySelector(sel); }
   function qsa(sel, root) { return Array.from((root || document).querySelectorAll(sel)); }
   function safeInt(x) { var n = parseInt(x, 10); return Number.isFinite(n) ? n : 0; }
+  function isOverview() {
+    return location.href.includes('screen=overview_villages') && location.href.includes('mode=prod');
+  }
 
   function envOk() {
     if (!window.$ || !window.TribalWars || !window.UI) {
@@ -23,8 +24,9 @@
     }
     return true;
   }
-
   if (!envOk()) return;
+
+  const AUTOSTART_KEY = 'lf_pkg_autostart_v1';
 
   function buildUrl(params, includeVillage) {
     const base = new URLSearchParams();
@@ -85,7 +87,7 @@
     '  <div id="lf-status" style="color:#444;font-size:12px"></div>',
     '</div>',
     '<div id="villList" style="max-height:420px;overflow-y:auto;margin-top:10px;border-top:1px solid #ccc;padding-top:5px">Csoport kiválasztva. Kattints az Indításra!</div>',
-    '<div style="text-align:center;font-size:11px;color:#555;margin-top:8px">By <b>LordFox</b> ·</div>'
+    '<div style="text-align:center;font-size:11px;color:#555;margin-top:8px">By <b>LordFox</b></div>'
   ].join('');
 
   document.body.appendChild(panel);
@@ -149,15 +151,57 @@
     if ([pkgWood,pkgClay,pkgIron,maxPackages].some(function(n){return !Number.isFinite(n);} )) {
       alert('Hibás érték valamelyik mezőben!'); return;
     }
+
+    // Ha nem az áttekintésen vagyunk, irány oda + autostart
+    if (!isOverview()) {
+      const cfg = {
+        coordinate: coordinate,
+        pkgWood: pkgWood, pkgClay: pkgClay, pkgIron: pkgIron, maxPackages: maxPackages,
+        selectedGroupId: selectedGroupId
+      };
+      try { localStorage.setItem(AUTOSTART_KEY, JSON.stringify(cfg)); } catch (e) {}
+      const overviewUrl = buildUrl({screen:'overview_villages', mode:'prod', group:selectedGroupId||0, page:-1}, true);
+      location.href = overviewUrl;
+      return;
+    }
+
+    // Már áttekintésen vagyunk → indul azonnal
     sentPackages = 0; usedVillageIds.clear(); scriptStarted = true;
     qs('#sentCounter').textContent = String(sentPackages);
-
     loadVillages();
   };
 
+  // Autostart, ha az átirányítás után vagyunk
+  (function maybeAutostart() {
+    if (!isOverview()) return;
+    let raw = null;
+    try { raw = localStorage.getItem(AUTOSTART_KEY); } catch (e) {}
+    if (!raw) return;
+    try {
+      const cfg = JSON.parse(raw);
+      localStorage.removeItem(AUTOSTART_KEY);
+      coordinate = cfg.coordinate || '';
+      pkgWood = cfg.pkgWood|0; pkgClay = cfg.pkgClay|0; pkgIron = cfg.pkgIron|0; maxPackages = cfg.maxPackages|0;
+      if (cfg.selectedGroupId) selectedGroupId = cfg.selectedGroupId;
+      // UI mezők frissítése (ha látható)
+      if (qs('#coordInput')) qs('#coordInput').value = coordinate;
+      if (qs('#woodInput')) qs('#woodInput').value = String(pkgWood);
+      if (qs('#clayInput')) qs('#clayInput').value = String(pkgClay);
+      if (qs('#ironInput')) qs('#ironInput').value = String(pkgIron);
+      if (qs('#maxInput')) qs('#maxInput').value = String(maxPackages);
+      if (qs('#groupSelector') && selectedGroupId) qs('#groupSelector').value = String(selectedGroupId);
+
+      sentPackages = 0; usedVillageIds.clear(); scriptStarted = true;
+      qs('#sentCounter').textContent = '0';
+      status('Autostart: faluk letöltése...');
+      loadVillages();
+    } catch (e) {
+      console.warn('[CsomagKüldő] Autostart parse hiba', e);
+    }
+  })();
+
   /* ----------------- Overview fetch (original flow) ----------------- */
   function parseOverviewDoc(doc, targetX, targetY) {
-    // Toleráns sor-keresés
     let rows = qsa('#production_table tr.nowrap', doc);
     if (!rows.length) rows = qsa('#production_table tr', doc);
     if (!rows.length) rows = qsa('table tr', doc);
@@ -168,7 +212,7 @@
       const linkEl = row.querySelector('a[href*="village="]');
       const name = nameEl ? nameEl.textContent.trim() : '';
       const link = linkEl ? linkEl.getAttribute('href') : '';
-      const idm = link.match(/village=(\d+)/);
+      const idm = link ? link.match(/village=(\d+)/) : null;
       const villageId = idm ? idm[1] : '';
       if (!name || !villageId) return;
       if (usedVillageIds.has(villageId)) return;
@@ -194,7 +238,7 @@
 
   function loadVillages() {
     qs('#villList').innerHTML = ''; status('Faluk letöltése (overview)...');
-    const [tx, ty] = coordinate.split('|').map(function(s){return parseInt(s,10);});
+    const [tx, ty] = (coordinate||'').split('|').map(function(s){return parseInt(s,10);});
 
     // Strategy 1: page=-1
     const urlAll = buildUrl({screen:'overview_villages', mode:'prod', group:selectedGroupId||0, page:-1}, true);
@@ -250,12 +294,8 @@
         $.get(url, function (html) {
           const doc = new DOMParser().parseFromString(html, 'text/html');
           const list = parseOverviewDoc(doc, tx, ty);
-          if (list.length) {
-            combined.push.apply(combined, list);
-            emptyStreak = 0;
-          } else {
-            emptyStreak++;
-          }
+          if (list.length) { combined.push.apply(combined, list); emptyStreak = 0; }
+          else { emptyStreak++; }
           page++;
           setTimeout(nextPage, 20);
         }).fail(function(){ emptyStreak++; page++; setTimeout(nextPage, 20); });
