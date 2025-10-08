@@ -1,10 +1,13 @@
 (function () {
   'use strict';
 
-  // --- Helpers ---
+  /* Original-flow version: server GET for overview & market,
+     but with robust URL builder (t token + village param), and tolerant selectors. */
+
+  // --- Guards ---
   function envOk() {
     if (!window.$ || !window.TribalWars || !window.UI) {
-      console.warn('[CsomagKüldő] jQuery/TribalWars/UI nem észlelhető. A játék oldalán futtasd.');
+      console.warn('[CsomagKüldő] jQuery/TribalWars/UI nem észlelhető. A játék termelés nézetén futtasd.');
     }
     return true;
   }
@@ -24,11 +27,28 @@
   if (!envOk()) return;
   if (!ensureOnProd()) return;
 
+  // --- URL builder that preserves sitter token (t) and village ---
+  function makeUrl(params, includeVillage) {
+    const base = new URLSearchParams();
+    const cur = new URLSearchParams(location.search);
+    if (cur.has('t')) base.set('t', cur.get('t'));
+    if (includeVillage) {
+      const vid = (params && params.village) || (window.game_data && game_data.village && game_data.village.id);
+      if (vid) base.set('village', String(vid));
+      if (params && params.village) delete params.village;
+    }
+    Object.keys(params || {}).forEach(function (k) {
+      const v = params[k];
+      if (v !== undefined && v !== null) base.set(k, String(v));
+    });
+    return '/game.php?' + base.toString();
+  }
+
+  // --- State ---
   let sentPackages = 0;
   let coordinate = '';
   let pkgWood = 0, pkgClay = 0, pkgIron = 0, maxPackages = 0;
   let selectedGroupId = null;
-  let allGroups = [];
   let scriptStarted = false;
   const usedVillageIds = new Set();
 
@@ -90,40 +110,34 @@
   };
   panel.ondragstart = function () { return false; };
 
-  // --- Csoportok ---
-  function fetchGroups() {
+  // --- Groups ---
+  function fetchGroups(callback) {
     const links = document.querySelectorAll('.group-menu-item');
-    allGroups = Array.from(links).map(function (link) {
+    const allGroups = Array.from(links).map(function (link) {
       return {
         id: link.dataset.groupId,
         name: link.textContent.replace(/[\\[\\]>]/g, '').trim(),
-        href: link.getAttribute('href'),
         selected: link.classList.contains('selected') || link.parentElement.tagName === 'STRONG'
       };
     });
-
     const select = document.getElementById('groupSelector');
     if (!select) return;
-
     select.innerHTML = allGroups.map(function (g) {
       return '<option value="' + g.id + '" ' + (g.selected ? 'selected' : '') + '>' + g.name + '</option>';
     }).join('');
-
     selectedGroupId = select.value;
-
     select.onchange = function () {
       selectedGroupId = select.value;
-      // Megkeressük a kiválasztott csoport linkjét és átirányítunk (console-run esetén ez a biztos)
-      const g = allGroups.find(function (x) { return x.id === selectedGroupId; });
-      if (g && g.href) {
-        const u = new URL(g.href, location.origin);
-        u.searchParams.set('mode', 'prod');
-        location.href = u.toString();
+      if (scriptStarted) {
+        document.getElementById('villList').innerHTML = 'Frissítés...';
+        setTimeout(loadVillages, 100);
+      } else {
+        document.getElementById('villList').innerHTML = 'Csoport kiválasztva. Kattints az Indításra!';
       }
     };
+    if (callback) callback();
   }
 
-  // --- Indítás ---
   document.getElementById('startScript').onclick = function () {
     const raw = document.getElementById('coordInput').value;
     const parsed = parseCoordinate(raw);
@@ -146,87 +160,81 @@
       alert('Hibás érték valamelyik mezőben!');
       return;
     }
-
-    // Közvetlenül az AKTUÁLIS oldal DOM-jából olvasunk
-    const villages = readVillagesFromPage();
-    if (!villages.length) {
-      document.getElementById('villList').innerHTML = 'Nem található falu a táblában (#production_table). Biztos a termelés nézeten vagy?';
-      return;
-    }
-    console.log('[CsomagKüldő] Falvak száma (DOM):', villages.length);
-    enrichWithMarketData(villages);
+    loadVillages();
   };
 
-  // --- Faluk olvasása az oldal DOM-jából ---
-  function readVillagesFromPage() {
-    const rows = document.querySelectorAll('#production_table tr.nowrap');
-    const list = [];
-    rows.forEach(function (row) {
-      const nameEl = row.querySelector('.quickedit-vn');
-      const villageLink = row.querySelector('a[href*="village="]');
-      const name = nameEl ? nameEl.innerText.trim() : null;
-      const href = villageLink ? villageLink.getAttribute('href') : null;
-      const idMatch = href ? href.match(/village=(\d+)/) : null;
-      const villageId = idMatch ? idMatch[1] : null;
-      if (!name || !villageId) return;
-      if (usedVillageIds.has(villageId)) return;
+  function safeDiv(a, b) { return b > 0 ? (a / b) : Infinity; }
 
-      const coordsMatch = name.match(/(\\d+)\\|(\\d+)/);
-      if (!coordsMatch) return;
-      const vx = parseInt(coordsMatch[1], 10);
-      const vy = parseInt(coordsMatch[2], 10);
-
-      const parseNum = function (sel) {
-        const el = row.querySelector(sel);
-        const t = el ? el.textContent.replace(/[^0-9]/g, '') : '0';
-        return parseInt(t || '0', 10) || 0;
-      };
-      const wood = parseNum('.wood');
-      const clay = parseNum('.stone');
-      const iron = parseNum('.iron');
-
-      list.push({ name: name, villageId: villageId, coords: [vx, vy], wood: wood, clay: clay, iron: iron, villageHref: href });
-    });
-    return list;
-  }
-
-  // --- Market adatok lekérése: a meglévő village href-ből építünk URL-t, hogy megmaradjon minden token ---
-  function enrichWithMarketData(villageList) {
-    // cél koordináta feldolgozása
+  // --- ORIGINAL: server GET for overview ---
+  function loadVillages() {
     const parts = coordinate.split('|');
     const targetX = parseInt(parts[0], 10);
     const targetY = parseInt(parts[1], 10);
-    villageList.forEach(function (v) {
-      const vx = v.coords[0], vy = v.coords[1];
-      v.distance = Math.round(Math.hypot(targetX - vx, targetY - vy));
-    });
 
-    let idx = 0;
-    const delay = 1;
+    const overviewUrl = makeUrl({
+      screen: 'overview_villages',
+      mode: 'prod',
+      group: selectedGroupId || 0,
+      page: -1
+    }, true);
 
-    function next() {
-      if (idx >= villageList.length) {
-        renderVillages(villageList);
-        return;
-      }
-      const v = villageList[idx];
-      // Token-megőrző market URL
-      const marketURL = new URL(v.villageHref, location.origin);
-      marketURL.searchParams.set('screen', 'market');
-      marketURL.searchParams.delete('mode');
-      marketURL.searchParams.delete('page');
+    $.get(overviewUrl, function (response) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(response, 'text/html');
+      // Toleráns sor-keresés
+      let rows = Array.from(doc.querySelectorAll('#production_table tr.nowrap'));
+      if (!rows.length) rows = Array.from(doc.querySelectorAll('#production_table tr'));
+      if (!rows.length) rows = Array.from(doc.querySelectorAll('table tr'));
 
-      $.get(marketURL.toString(), function (marketRes) {
-        try {
+      const villageList = [];
+      rows.forEach(function (row) {
+        const nameEl = row.querySelector('.quickedit-vn') || row.querySelector('a[href*="village="]');
+        const name = nameEl ? nameEl.textContent.trim() : null;
+        const linkEl = row.querySelector('a[href*="village="]');
+        const link = linkEl ? linkEl.getAttribute('href') : null;
+        const villageId = link ? ((link.match(/village=(\\d+)/) || [])[1]) : null;
+        if (!name || !villageId) return;
+        if (usedVillageIds.has(villageId)) return;
+
+        const coordsMatch = name.match(/(\\d+)\\|(\\d+)/);
+        if (!coordsMatch) return;
+        const vx = parseInt(coordsMatch[1], 10);
+        const vy = parseInt(coordsMatch[2], 10);
+        const distance = Math.round(Math.hypot(targetX - vx, targetY - vy));
+
+        const parseNum = function (el) {
+          if (!el) return 0;
+          const t = el.textContent.replace(/[^0-9]/g, '');
+          return parseInt(t || '0', 10) || 0;
+        };
+        const wood = parseNum(row.querySelector('.wood, [class*="wood"]'));
+        const clay = parseNum(row.querySelector('.stone, [class*="stone"]'));
+        const iron = parseNum(row.querySelector('.iron, [class*="iron"]'));
+
+        villageList.push({ name: name, villageId: villageId, coords: [vx, vy], wood: wood, clay: clay, iron: iron, distance: distance });
+      });
+
+      const delay = 1;
+      let index = 0;
+
+      function fetchMarketDataSequentially() {
+        if (index >= villageList.length) {
+          renderVillages(villageList);
+          return;
+        }
+        const v = villageList[index];
+        const marketUrl = makeUrl({ village: v.villageId, screen: 'market' }, true);
+
+        $.get(marketUrl, function (marketRes) {
           const mDoc = new DOMParser().parseFromString(marketRes, 'text/html');
           const mc = mDoc.querySelector('#market_merchant_available_count');
           const freeMerchants = mc ? (parseInt(mc.textContent, 10) || 0) : 0;
           const packageVolume = pkgWood + pkgClay + pkgIron;
 
           const maxByResources = Math.floor(Math.min(
-            v.wood / (pkgWood || Infinity),
-            v.clay / (pkgClay || Infinity),
-            v.iron / (pkgIron || Infinity)
+            safeDiv(v.wood, pkgWood),
+            safeDiv(v.clay, pkgClay),
+            safeDiv(v.iron, pkgIron)
           ));
           const maxByTraders = packageVolume > 0 ? Math.floor((freeMerchants * 1000) / packageVolume) : 0;
 
@@ -234,20 +242,20 @@
             Number.isFinite(maxByResources) ? maxByResources : 0,
             maxByTraders
           ));
-        } catch (e) {
-          console.warn('[CsomagKüldő] Market parse hiba a falunál', v.name, e);
+          index++;
+          setTimeout(fetchMarketDataSequentially, delay);
+        }).fail(function (xhr) {
+          console.warn('[CsomagKüldő] Market GET hiba', v.name, xhr && xhr.status);
           v.maxFromVillage = 0;
-        }
-        idx++;
-        setTimeout(next, delay);
-      }).fail(function (xhr) {
-        console.warn('[CsomagKüldő] Market GET hiba a falunál', v.name, xhr && xhr.status);
-        v.maxFromVillage = 0;
-        idx++;
-        setTimeout(next, delay);
-      });
-    }
-    next();
+          index++;
+          setTimeout(fetchMarketDataSequentially, delay);
+        });
+      }
+      fetchMarketDataSequentially();
+    }).fail(function (xhr) {
+      UI.ErrorMessage && UI.ErrorMessage('Falulista letöltési hiba: ' + (xhr && xhr.status));
+      console.error('[CsomagKüldő] Overview GET hiba', xhr && xhr.status);
+    });
   }
 
   function renderVillages(villages) {
@@ -293,7 +301,14 @@
         const count = parseInt(sel.value, 10) || 0;
         if (count === 0) return;
 
-        $.get('/game.php?screen=api&ajax=target_selection&input=' + encodeURIComponent(coordinate) + '&type=coord', function (json) {
+        const apiUrl = makeUrl({
+          screen: 'api',
+          ajax: 'target_selection',
+          input: coordinate,
+          type: 'coord'
+        }, true);
+
+        $.get(apiUrl, function (json) {
           const data = (typeof json === 'string') ? JSON.parse(json) : json;
           if (!data || !data.villages || !data.villages.length) {
             alert('Cél nem található!');
