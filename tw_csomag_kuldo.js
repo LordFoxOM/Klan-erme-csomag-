@@ -2,20 +2,42 @@
   'use strict';
 
   /* =============================================================
-     TW Csomag Küldő – Eredeti (szerveres GET) + automatikus átirányítás
-     Kérés szerint:
-     - Indításkor, ha NEM az áttekintés (termelés) oldalon vagy:
-       kiír egy üzenetet, majd átirányít az áttekintésre és ott automatikusan elindul.
-     - Ha már az áttekintésen vagy, azonnal indul.
+     TW Csomag Küldő – Eredeti (szerveres GET) – azonnali átirányítással
+     - A script betöltésekor: ha NEM az áttekintés (termelés) oldalon vagy,
+       AZONNAL átirányít az overview_villages&mode=prod oldalra.
+     - Nincs kérdés/nincs választási lehetőség.
+     - Az áttekintésen a panel megjelenik, ott tudsz indulni.
      ============================================================= */
 
-  /* ----------------- Small utils ----------------- */
-  function qs(sel, root) { return (root || document).querySelector(sel); }
-  function qsa(sel, root) { return Array.from((root || document).querySelectorAll(sel)); }
-  function safeInt(x) { var n = parseInt(x, 10); return Number.isFinite(n) ? n : 0; }
   function isOverview() {
     return location.href.includes('screen=overview_villages') && location.href.includes('mode=prod');
   }
+
+  // Mindig őrizzük meg a sitter token-t és az aktuális village paramétert
+  (function forceOverview() {
+    if (isOverview()) return;
+    var cur = new URLSearchParams(location.search);
+    var params = new URLSearchParams();
+    if (cur.has('t')) params.set('t', cur.get('t'));
+    var vid = cur.get('village');
+    try {
+      if (!vid && window.game_data && game_data.village && game_data.village.id) {
+        vid = String(game_data.village.id);
+      }
+    } catch(e){}
+    if (vid) params.set('village', vid);
+    params.set('screen', 'overview_villages');
+    params.set('mode', 'prod');
+    // page=-1 sok világon az összes falut hozza; ha nem támogatott, a script később lapozni fog
+    params.set('page', '-1');
+    location.href = '/game.php?' + params.toString();
+    return;
+  })();
+
+  // Ha idáig eljutunk, már az áttekintésen vagyunk
+  function qs(sel, root) { return (root || document).querySelector(sel); }
+  function qsa(sel, root) { return Array.from((root || document).querySelectorAll(sel)); }
+  function safeInt(x) { var n = parseInt(x, 10); return Number.isFinite(n) ? n : 0; }
 
   function envOk() {
     if (!window.$ || !window.TribalWars || !window.UI) {
@@ -25,14 +47,10 @@
   }
   if (!envOk()) return;
 
-  const AUTOSTART_KEY = 'lf_pkg_autostart_v1';
-
   function buildUrl(params, includeVillage) {
     const base = new URLSearchParams();
     const cur = new URLSearchParams(location.search);
-    // sitter token
     if (cur.has('t')) base.set('t', cur.get('t'));
-    // village context
     const currentVillage = (window.game_data && game_data.village && game_data.village.id) ? String(game_data.village.id) : (cur.get('village') || '');
     if (includeVillage && currentVillage) base.set('village', currentVillage);
     Object.keys(params || {}).forEach(function (k) {
@@ -55,7 +73,6 @@
   function status(msg) {
     const el = document.getElementById('lf-status');
     if (el) el.textContent = msg;
-    try { if (window.UI && UI.InfoMessage) UI.InfoMessage(msg); } catch (e) {}
   }
 
   /* ----------------- UI Panel ----------------- */
@@ -64,7 +81,7 @@
   panel.style.cssText = [
     'position:fixed','top:90px','left:90px','z-index:9999',
     'background:#f4e4bc','color:#000','padding:10px','border:2px solid #804000',
-    'width:540px','resize:both','overflow:auto','font-family:Verdana,sans-serif',
+    'width:520px','resize:both','overflow:auto','font-family:Verdana,sans-serif',
     'font-size:13px','border-radius:8px','box-shadow:0 0 10px #000'
   ].join(';');
 
@@ -81,7 +98,7 @@
     '  <label><span><img src="https://dshu.innogamescdn.com/asset/7d3266bc/graphic/eisen.webp" height="15"> <b>1 csomag vas</b></span><input id="ironInput" type="number" value="2500" style="width:100%"></label>',
     '  <label><span><b>Falu csoport</b></span><select id="groupSelector" style="width:100%"></select></label>',
     '</div>',
-    '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">',
+    '<div style="margin-top:8px;display:flex;gap:8px;align-items:center">',
     '  <button id="startScript" class="btn">Indítás</button>',
     '  <div><b>Elküldve:</b> <span id="sentCounter">0</span></div>',
     '  <div id="lf-status" style="color:#444;font-size:12px"></div>',
@@ -152,54 +169,10 @@
       alert('Hibás érték valamelyik mezőben!'); return;
     }
 
-    if (!isOverview()) {
-      // Kérés szerint: előbb írjuk ki, majd automatikusan átirányítunk és autostartolunk
-      status('Nem az áttekintés (termelés) oldalon vagy. Átirányítás folyamatban...');
-      const cfg = {
-        coordinate: coordinate,
-        pkgWood: pkgWood, pkgClay: pkgClay, pkgIron: pkgIron, maxPackages: maxPackages,
-        selectedGroupId: selectedGroupId
-      };
-      try { localStorage.setItem(AUTOSTART_KEY, JSON.stringify(cfg)); } catch (e) {}
-      const overviewUrl = buildUrl({screen:'overview_villages', mode:'prod', group:selectedGroupId||0, page:-1}, true);
-      setTimeout(function(){ location.href = overviewUrl; }, 300); // egy kis idő, hogy a felirat látható legyen
-      return;
-    }
-
-    // Már áttekintésen vagyunk → indul
     sentPackages = 0; usedVillageIds.clear(); scriptStarted = true;
     qs('#sentCounter').textContent = String(sentPackages);
     loadVillages();
   };
-
-  // Autostart, ha az átirányítás után vagyunk
-  (function maybeAutostart() {
-    if (!isOverview()) return;
-    let raw = null;
-    try { raw = localStorage.getItem(AUTOSTART_KEY); } catch (e) {}
-    if (!raw) return;
-    try {
-      const cfg = JSON.parse(raw);
-      localStorage.removeItem(AUTOSTART_KEY);
-      coordinate = cfg.coordinate || '';
-      pkgWood = cfg.pkgWood|0; pkgClay = cfg.pkgClay|0; pkgIron = cfg.pkgIron|0; maxPackages = cfg.maxPackages|0;
-      if (cfg.selectedGroupId) selectedGroupId = cfg.selectedGroupId;
-      // UI mezők frissítése
-      if (qs('#coordInput')) qs('#coordInput').value = coordinate;
-      if (qs('#woodInput')) qs('#woodInput').value = String(pkgWood);
-      if (qs('#clayInput')) qs('#clayInput').value = String(pkgClay);
-      if (qs('#ironInput')) qs('#ironInput').value = String(pkgIron);
-      if (qs('#maxInput')) qs('#maxInput').value = String(maxPackages);
-      if (qs('#groupSelector') && selectedGroupId) qs('#groupSelector').value = String(selectedGroupId);
-
-      sentPackages = 0; usedVillageIds.clear(); scriptStarted = true;
-      qs('#sentCounter').textContent = '0';
-      status('Autostart: faluk letöltése...');
-      loadVillages();
-    } catch (e) {
-      console.warn('[CsomagKüldő] Autostart parse hiba', e);
-    }
-  })();
 
   /* ----------------- Overview fetch (original flow) ----------------- */
   function parseOverviewDoc(doc, targetX, targetY) {
