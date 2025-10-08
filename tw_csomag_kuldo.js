@@ -1,6 +1,7 @@
 (function () {
   'use strict';
 
+  // --- Helpers ---
   function envOk() {
     if (!window.$ || !window.TribalWars || !window.UI) {
       console.warn('[CsomagKüldő] jQuery/TribalWars/UI nem észlelhető. A játék oldalán futtasd.');
@@ -9,11 +10,12 @@
   }
 
   function ensureOnProd() {
-    if (!window.location.href.includes('screen=overview_villages&mode=prod')) {
-      const url = new URL(window.location.origin + '/game.php');
+    const ok = location.href.includes('screen=overview_villages') && location.href.includes('mode=prod');
+    if (!ok) {
+      const url = new URL(location.origin + '/game.php');
       url.searchParams.set('screen', 'overview_villages');
       url.searchParams.set('mode', 'prod');
-      window.location.href = url.toString();
+      location.href = url.toString();
       return false;
     }
     return true;
@@ -32,47 +34,22 @@
 
   function parseCoordinate(raw) {
     if (raw == null) return null;
-    let s = String(raw).trim();
-    // távolítsuk el gyakori láthatatlan karaktereket
-    s = s.replace(/[\u200B-\u200D\uFEFF]/g, '');
-    // engedjük a broken bar-t is (¦ U+00A6)
-    // fogadjuk el, ha extra szöveg is van körülötte (pl. "487|560 K55")
+    let s = String(raw).trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
     const m = s.match(/(\d{1,3})\s*[\|\u00A6]\s*(\d{1,3})/);
-    if (m) {
-      const x = parseInt(m[1], 10);
-      const y = parseInt(m[2], 10);
-      if (Number.isFinite(x) && Number.isFinite(y)) return x + '|' + y;
-    }
-    // fallback: szűrjük ki a felesleges karaktereket és próbáljuk újra
+    if (m) return m[1] + '|' + m[2];
     const stripped = s.replace(/[^\d\|\u00A6]/g, '');
     const n = stripped.match(/(\d{1,3})[\|\u00A6](\d{1,3})/);
-    if (n) {
-      const x = parseInt(n[1], 10);
-      const y = parseInt(n[2], 10);
-      if (Number.isFinite(x) && Number.isFinite(y)) return x + '|' + y;
-    }
-    return null;
+    return n ? (n[1] + '|' + n[2]) : null;
   }
 
-  // Panel
+  // --- Panel ---
   const panel = document.createElement('div');
   panel.id = 'lf-package-panel';
   panel.style.cssText = [
-    'position:fixed',
-    'top:100px',
-    'left:100px',
-    'z-index:9999',
-    'background:#f4e4bc',
-    'color:#000',
-    'padding:10px',
-    'border:2px solid #804000',
-    'width:460px',
-    'resize:both',
-    'overflow:auto',
-    'font-family:Verdana,sans-serif',
-    'font-size:13px',
-    'border-radius:8px',
-    'box-shadow:0 0 10px #000'
+    'position:fixed','top:100px','left:100px','z-index:9999',
+    'background:#f4e4bc','color:#000','padding:10px','border:2px solid #804000',
+    'width:460px','resize:both','overflow:auto','font-family:Verdana,sans-serif',
+    'font-size:13px','border-radius:8px','box-shadow:0 0 10px #000'
   ].join(';');
 
   panel.innerHTML = [
@@ -109,18 +86,18 @@
       panel.style.top = (ev.pageY - offsetY) + 'px';
     }
     document.addEventListener('mousemove', move);
-    panel.onmouseup = function () {
-      document.removeEventListener('mousemove', move);
-    };
+    panel.onmouseup = function () { document.removeEventListener('mousemove', move); };
   };
   panel.ondragstart = function () { return false; };
 
-  function fetchGroups(callback) {
+  // --- Csoportok ---
+  function fetchGroups() {
     const links = document.querySelectorAll('.group-menu-item');
     allGroups = Array.from(links).map(function (link) {
       return {
         id: link.dataset.groupId,
         name: link.textContent.replace(/[\\[\\]>]/g, '').trim(),
+        href: link.getAttribute('href'),
         selected: link.classList.contains('selected') || link.parentElement.tagName === 'STRONG'
       };
     });
@@ -136,22 +113,22 @@
 
     select.onchange = function () {
       selectedGroupId = select.value;
-      if (scriptStarted) {
-        document.getElementById('villList').innerHTML = 'Frissítés...';
-        setTimeout(loadVillages, 100);
-      } else {
-        document.getElementById('villList').innerHTML = 'Csoport kiválasztva. Kattints az Indításra!';
+      // Megkeressük a kiválasztott csoport linkjét és átirányítunk (console-run esetén ez a biztos)
+      const g = allGroups.find(function (x) { return x.id === selectedGroupId; });
+      if (g && g.href) {
+        const u = new URL(g.href, location.origin);
+        u.searchParams.set('mode', 'prod');
+        location.href = u.toString();
       }
     };
-
-    if (callback) callback();
   }
 
+  // --- Indítás ---
   document.getElementById('startScript').onclick = function () {
     const raw = document.getElementById('coordInput').value;
     const parsed = parseCoordinate(raw);
     if (!parsed) {
-      alert('Érvénytelen koordináta! Így add meg: 500|500 (pipe jellel).');
+      alert('Érvénytelen koordináta! Így add meg: 500|500');
       return;
     }
     coordinate = parsed;
@@ -164,91 +141,113 @@
     usedVillageIds.clear();
     scriptStarted = true;
     document.getElementById('sentCounter').innerText = String(sentPackages);
+
     if ([pkgWood, pkgClay, pkgIron, maxPackages].some(function (n) { return isNaN(n); })) {
       alert('Hibás érték valamelyik mezőben!');
       return;
     }
-    loadVillages();
+
+    // Közvetlenül az AKTUÁLIS oldal DOM-jából olvasunk
+    const villages = readVillagesFromPage();
+    if (!villages.length) {
+      document.getElementById('villList').innerHTML = 'Nem található falu a táblában (#production_table). Biztos a termelés nézeten vagy?';
+      return;
+    }
+    console.log('[CsomagKüldő] Falvak száma (DOM):', villages.length);
+    enrichWithMarketData(villages);
   };
 
-  function safeDiv(a, b) {
-    return b > 0 ? (a / b) : Infinity;
+  // --- Faluk olvasása az oldal DOM-jából ---
+  function readVillagesFromPage() {
+    const rows = document.querySelectorAll('#production_table tr.nowrap');
+    const list = [];
+    rows.forEach(function (row) {
+      const nameEl = row.querySelector('.quickedit-vn');
+      const villageLink = row.querySelector('a[href*="village="]');
+      const name = nameEl ? nameEl.innerText.trim() : null;
+      const href = villageLink ? villageLink.getAttribute('href') : null;
+      const idMatch = href ? href.match(/village=(\d+)/) : null;
+      const villageId = idMatch ? idMatch[1] : null;
+      if (!name || !villageId) return;
+      if (usedVillageIds.has(villageId)) return;
+
+      const coordsMatch = name.match(/(\\d+)\\|(\\d+)/);
+      if (!coordsMatch) return;
+      const vx = parseInt(coordsMatch[1], 10);
+      const vy = parseInt(coordsMatch[2], 10);
+
+      const parseNum = function (sel) {
+        const el = row.querySelector(sel);
+        const t = el ? el.textContent.replace(/[^0-9]/g, '') : '0';
+        return parseInt(t || '0', 10) || 0;
+      };
+      const wood = parseNum('.wood');
+      const clay = parseNum('.stone');
+      const iron = parseNum('.iron');
+
+      list.push({ name: name, villageId: villageId, coords: [vx, vy], wood: wood, clay: clay, iron: iron, villageHref: href });
+    });
+    return list;
   }
 
-  function loadVillages() {
-    var parts = coordinate.split('|');
-    var targetX = parseInt(parts[0], 10);
-    var targetY = parseInt(parts[1], 10);
+  // --- Market adatok lekérése: a meglévő village href-ből építünk URL-t, hogy megmaradjon minden token ---
+  function enrichWithMarketData(villageList) {
+    // cél koordináta feldolgozása
+    const parts = coordinate.split('|');
+    const targetX = parseInt(parts[0], 10);
+    const targetY = parseInt(parts[1], 10);
+    villageList.forEach(function (v) {
+      const vx = v.coords[0], vy = v.coords[1];
+      v.distance = Math.round(Math.hypot(targetX - vx, targetY - vy));
+    });
 
-    $.get('/game.php?screen=overview_villages&mode=prod&group=' + encodeURIComponent(selectedGroupId) + '&page=-1', function (response) {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(response, 'text/html');
-      const rows = doc.querySelectorAll('#production_table tr.nowrap');
-      const villageList = [];
+    let idx = 0;
+    const delay = 1;
 
-      rows.forEach(function (row) {
-        const nameEl = row.querySelector('.quickedit-vn');
-        const name = nameEl ? nameEl.innerText.trim() : null;
-        const linkEl = row.querySelector('a');
-        const link = linkEl ? linkEl.href : null;
-        const villageIdMatch = link ? link.match(/village=(\\d+)/) : null;
-        const villageId = villageIdMatch ? villageIdMatch[1] : null;
-        if (!name || !villageId) return;
-        if (usedVillageIds.has(villageId)) return;
+    function next() {
+      if (idx >= villageList.length) {
+        renderVillages(villageList);
+        return;
+      }
+      const v = villageList[idx];
+      // Token-megőrző market URL
+      const marketURL = new URL(v.villageHref, location.origin);
+      marketURL.searchParams.set('screen', 'market');
+      marketURL.searchParams.delete('mode');
+      marketURL.searchParams.delete('page');
 
-        const coordsMatch = name.match(/(\\d+)\\|(\\d+)/);
-        if (!coordsMatch) return;
-        const vx = parseInt(coordsMatch[1], 10);
-        const vy = parseInt(coordsMatch[2], 10);
-        const distance = Math.round(Math.hypot(targetX - vx, targetY - vy));
-
-        const parseNum = function (sel) {
-          const el = row.querySelector(sel);
-          const t = el ? el.innerText.replace(/[^0-9]/g, '') : '0';
-          return parseInt(t || '0', 10) || 0;
-        };
-
-        const wood = parseNum('.wood');
-        const clay = parseNum('.stone');
-        const iron = parseNum('.iron');
-
-        villageList.push({ name: name, villageId: villageId, coords: [vx, vy], wood: wood, clay: clay, iron: iron, distance: distance });
-      });
-
-      const delay = 1;
-      let index = 0;
-
-      function fetchMarketDataSequentially() {
-        if (index >= villageList.length) {
-          renderVillages(villageList);
-          return;
-        }
-        const v = villageList[index];
-        $.get('/game.php?village=' + v.villageId + '&screen=market', function (marketRes) {
+      $.get(marketURL.toString(), function (marketRes) {
+        try {
           const mDoc = new DOMParser().parseFromString(marketRes, 'text/html');
           const mc = mDoc.querySelector('#market_merchant_available_count');
           const freeMerchants = mc ? (parseInt(mc.textContent, 10) || 0) : 0;
           const packageVolume = pkgWood + pkgClay + pkgIron;
 
           const maxByResources = Math.floor(Math.min(
-            safeDiv(v.wood, pkgWood),
-            safeDiv(v.clay, pkgClay),
-            safeDiv(v.iron, pkgIron)
+            v.wood / (pkgWood || Infinity),
+            v.clay / (pkgClay || Infinity),
+            v.iron / (pkgIron || Infinity)
           ));
-
           const maxByTraders = packageVolume > 0 ? Math.floor((freeMerchants * 1000) / packageVolume) : 0;
 
           v.maxFromVillage = Math.max(0, Math.min(
             Number.isFinite(maxByResources) ? maxByResources : 0,
             maxByTraders
           ));
-
-          index++;
-          setTimeout(fetchMarketDataSequentially, delay);
-        });
-      }
-      fetchMarketDataSequentially();
-    });
+        } catch (e) {
+          console.warn('[CsomagKüldő] Market parse hiba a falunál', v.name, e);
+          v.maxFromVillage = 0;
+        }
+        idx++;
+        setTimeout(next, delay);
+      }).fail(function (xhr) {
+        console.warn('[CsomagKüldő] Market GET hiba a falunál', v.name, xhr && xhr.status);
+        v.maxFromVillage = 0;
+        idx++;
+        setTimeout(next, delay);
+      });
+    }
+    next();
   }
 
   function renderVillages(villages) {
@@ -336,5 +335,6 @@
     });
   }
 
+  // Init
   fetchGroups();
 })();
