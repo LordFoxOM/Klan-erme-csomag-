@@ -2,11 +2,11 @@
   'use strict';
 
   /* =============================================================
-     TW Csomag Küldő – Eredeti (szerveres GET) + "előbb kérdez" átirányítás
-     - Ha NEM az áttekintésen vagy: előbb felajánlja:
-         [Megnyitom kézzel] vagy [Átirányítás + újraindítás]
-     - Ha Átirányítás: elmenti a beállításokat és overview-ra dob, ott autostart.
-     - Ha már áttekintésen vagy: azonnal indul.
+     TW Csomag Küldő – Eredeti (szerveres GET) + automatikus átirányítás
+     Kérés szerint:
+     - Indításkor, ha NEM az áttekintés (termelés) oldalon vagy:
+       kiír egy üzenetet, majd átirányít az áttekintésre és ott automatikusan elindul.
+     - Ha már az áttekintésen vagy, azonnal indul.
      ============================================================= */
 
   /* ----------------- Small utils ----------------- */
@@ -55,6 +55,7 @@
   function status(msg) {
     const el = document.getElementById('lf-status');
     if (el) el.textContent = msg;
+    try { if (window.UI && UI.InfoMessage) UI.InfoMessage(msg); } catch (e) {}
   }
 
   /* ----------------- UI Panel ----------------- */
@@ -84,13 +85,6 @@
     '  <button id="startScript" class="btn">Indítás</button>',
     '  <div><b>Elküldve:</b> <span id="sentCounter">0</span></div>',
     '  <div id="lf-status" style="color:#444;font-size:12px"></div>',
-    '</div>',
-    '<div id="lf-not-overview" style="display:none;margin-top:8px;padding:8px;border:1px dashed #a87432;background:#fff7e0;border-radius:6px">',
-    '  <div style="margin-bottom:6px"><b>Nem az áttekintés (termelés) oldalon vagy.</b></div>',
-    '  <div style="display:flex;gap:8px;flex-wrap:wrap">',
-    '    <button id="lf-open-manual" class="btn">Megnyitom kézzel</button>',
-    '    <button id="lf-redirect-auto" class="btn">Átirányítás + újraindítás</button>',
-    '  </div>',
     '</div>',
     '<div id="villList" style="max-height:420px;overflow-y:auto;margin-top:10px;border-top:1px solid #ccc;padding-top:5px">Csoport kiválasztva. Kattints az Indításra!</div>',
     '<div style="text-align:center;font-size:11px;color:#555;margin-top:8px">By <b>LordFox</b> · eredeti-flow</div>'
@@ -159,25 +153,16 @@
     }
 
     if (!isOverview()) {
-      // Mutassunk választási lehetőséget, NE irányítsunk azonnal
-      const box = qs('#lf-not-overview');
-      box.style.display = 'block';
+      // Kérés szerint: előbb írjuk ki, majd automatikusan átirányítunk és autostartolunk
+      status('Nem az áttekintés (termelés) oldalon vagy. Átirányítás folyamatban...');
+      const cfg = {
+        coordinate: coordinate,
+        pkgWood: pkgWood, pkgClay: pkgClay, pkgIron: pkgIron, maxPackages: maxPackages,
+        selectedGroupId: selectedGroupId
+      };
+      try { localStorage.setItem(AUTOSTART_KEY, JSON.stringify(cfg)); } catch (e) {}
       const overviewUrl = buildUrl({screen:'overview_villages', mode:'prod', group:selectedGroupId||0, page:-1}, true);
-      qs('#lf-open-manual').onclick = function () {
-        // Nyissuk meg ugyanebben a tabban, de nincs autostart – futtasd újra a scriptet
-        location.href = overviewUrl;
-      };
-      qs('#lf-redirect-auto').onclick = function () {
-        // Mentsük el és irányítsunk, majd autostart
-        const cfg = {
-          coordinate: coordinate,
-          pkgWood: pkgWood, pkgClay: pkgClay, pkgIron: pkgIron, maxPackages: maxPackages,
-          selectedGroupId: selectedGroupId
-        };
-        try { localStorage.setItem(AUTOSTART_KEY, JSON.stringify(cfg)); } catch (e) {}
-        location.href = overviewUrl;
-      };
-      status('Nem az áttekintésen vagy. Válassz: kézi megnyitás vagy átirányítás + autostart.');
+      setTimeout(function(){ location.href = overviewUrl; }, 300); // egy kis idő, hogy a felirat látható legyen
       return;
     }
 
@@ -199,7 +184,7 @@
       coordinate = cfg.coordinate || '';
       pkgWood = cfg.pkgWood|0; pkgClay = cfg.pkgClay|0; pkgIron = cfg.pkgIron|0; maxPackages = cfg.maxPackages|0;
       if (cfg.selectedGroupId) selectedGroupId = cfg.selectedGroupId;
-      // UI mezők frissítése (ha látható)
+      // UI mezők frissítése
       if (qs('#coordInput')) qs('#coordInput').value = coordinate;
       if (qs('#woodInput')) qs('#woodInput').value = String(pkgWood);
       if (qs('#clayInput')) qs('#clayInput').value = String(pkgClay);
