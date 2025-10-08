@@ -90,7 +90,7 @@
     '  <div id="lf-status" style="color:#444;font-size:12px"></div>',
     '</div>',
     '<div id="villList" style="max-height:420px;overflow-y:auto;margin-top:10px;border-top:1px solid #ccc;padding-top:5px">Csoport kiválasztva. Kattints az Indításra!</div>',
-    '<div style="text-align:center;font-size:11px;color:#555;margin-top:8px">By <b>LordFox</b> · Eredeti Script/div>'
+    '<div style="text-align:center;font-size:11px;color:#555;margin-top:8px">By <b>LordFox</b> · /div>'
   ].join('');
 
   document.body.appendChild(panel);
